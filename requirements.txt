@@ -1,0 +1,7 @@
+torch==1.7.1
+matplotlib==3.3.3
+torch_summary==1.4.5
+numpy==1.19.1
+scipy==1.5.2
+librosa==0.8.0
+torchsummary==1.5.1

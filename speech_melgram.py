@@ -8,7 +8,7 @@ from torch import nn, optim
 import torch.nn.functional as F
 
 from matplotlib.cbook import (
-    MatplotlibDeprecationWarning, dedent, get_label, sanitize_sequence)
+    MatplotlibDeprecationWarning, sanitize_sequence)
 from matplotlib.cbook import mplDeprecation  # deprecated
 from matplotlib.rcsetup import defaultParams, validate_backend, cycler
 import matplotlib.pyplot as plt
@@ -16,41 +16,66 @@ import librosa
 import librosa.display
 
 
-def create_mel_filters(sample_rate=16000, n_fft=512, nfilt=32):
-    # Mel Filter Banks
-    # ----------------
-    low_freq_mel = 0
-    high_freq_mel = (2595 * numpy.log10(1 + (sample_rate / 2) / 700))  # Convert Hz to Mel
-    mel_points = numpy.linspace(low_freq_mel, high_freq_mel, nfilt + 2)  # Equally spaced in Mel scale
-    hz_points = (700 * (10**(mel_points / 2595) - 1))  # Convert Mel to Hz
-    bin = numpy.floor((n_fft + 1) * hz_points / sample_rate)
 
 
-    fbank = numpy.zeros((nfilt, int(numpy.floor(n_fft / 2 + 1))))
-    for m in range(1, nfilt + 1):
-        f_m_minus = int(bin[m - 1])   # left
-        f_m = int(bin[m])             # center
-        f_m_plus = int(bin[m + 1])    # right
+def hz2mel(hz):
+    """Convert a value in Hertz to Mels
 
-        for k in range(f_m_minus, f_m):
-            fbank[m - 1, k] = (k - bin[m - 1]) / (bin[m] - bin[m - 1])
-        for k in range(f_m, f_m_plus):
-            fbank[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
+    :param hz: a value in Hz. This can also be a numpy array, conversion proceeds element-wise.
+    :returns: a value in Mels. If an array was passed in, an identical sized array is returned.
+    """
+    return 2595 * numpy.log10(1+hz/700.)
+
+def mel2hz(mel):
+    """Convert a value in Mels to Hertz
+
+    :param mel: a value in Mels. This can also be a numpy array, conversion proceeds element-wise.
+    :returns: a value in Hertz. If an array was passed in, an identical sized array is returned.
+    """
+    return 700*(10**(mel/2595.0)-1)
+
+def get_filterbanks(nfilt=20,nfft=512,samplerate=16000,lowfreq=0,highfreq=None):
+    """Compute a Mel-filterbank. The filters are stored in the rows, the columns correspond
+    to fft bins. The filters are returned as an array of size nfilt * (nfft/2 + 1)
+
+    :param nfilt: the number of filters in the filterbank, default 20.
+    :param nfft: the FFT size. Default is 512.
+    :param samplerate: the sample rate of the signal we are working with, in Hz. Affects mel spacing.
+    :param lowfreq: lowest band edge of mel filters, default 0 Hz
+    :param highfreq: highest band edge of mel filters, default samplerate/2
+    :returns: A numpy array of size nfilt * (nfft/2 + 1) containing filterbank. Each row holds 1 filter.
+    """
+    highfreq= highfreq or samplerate/2
+    assert highfreq <= samplerate/2, "highfreq is greater than samplerate/2"
+
+    # compute points evenly spaced in mels
+    lowmel = hz2mel(lowfreq)
+    highmel = hz2mel(highfreq)
+    melpoints = numpy.linspace(lowmel,highmel,nfilt+2)
+    # our points are in Hz, but we use fft bins, so we have to convert
+    #  from Hz to fft bin number
+    bin = numpy.floor((nfft+1)*mel2hz(melpoints)/samplerate)
+
+    fbank = numpy.zeros([nfilt,nfft//2+1])
+    for j in range(0,nfilt):
+        for i in range(int(bin[j]), int(bin[j+1])):
+            fbank[j,i] = (i - bin[j]) / (bin[j+1]-bin[j])
+        for i in range(int(bin[j+1]), int(bin[j+2])):
+            fbank[j,i] = (bin[j+2]-i) / (bin[j+2]-bin[j+1])
             
+    
     return fbank
 
 
 
 def create_fft_kernels(filter_length=512, nb_freq_pts=258):
-    # create an identity matrix.
-    # each row in this matrix is a vector of Length N, has only one non-zero value
-    # Take the FFT of the entire matrix. Each row is the FFT of an N-length real vector with 1 non-zero elements
-    fourier_basis = numpy.fft.fft(numpy.eye(filter_length))
-
-    # keep only the first (N/2 + 1) rows
-    # Split the complex rows into 'real' rows stacked on top of 'imag' rows
-    #
-    cos_kernel = numpy.real(fourier_basis[:nb_freq_pts, :])
-    sin_kernel = numpy.imag(fourier_basis[:nb_freq_pts, :])
-    #
-    return cos_kernel, sin_kernel
+    
+    M_cos = numpy.eye(filter_length)
+    M_sin = numpy.eye(filter_length)
+    for k in range(0,filter_length-1):
+        for n in range(filter_length):
+            M_cos[k,n] = numpy.cos(float(n*k*2)*(numpy.pi)/float(filter_length))
+            M_sin[k,n] = numpy.sin(float(n*k*2)*(numpy.pi)/float(filter_length))
+            
+    
+    return M_cos, M_sin
