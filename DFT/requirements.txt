@@ -1,0 +1,9 @@
+numpy
+scipy
+librosa
+matplotlib
+torchsummary
+torch
+
+
+
